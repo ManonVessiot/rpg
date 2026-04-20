@@ -117,17 +117,17 @@
 
     // ── CONSTANTES ──────────────────────────────────────────────────
     const CLASSES = [
-      { id: "warrior", label: "⚔️ Guerrier", desc: "Force & discipline", bonus: "Fitness" },
-      { id: "mage", label: "🧙 Mage", desc: "Savoir & créativité", bonus: "Apprentissage" },
-      { id: "rogue", label: "🗡️ Roublard", desc: "Agilité & productivité", bonus: "Travail" },
-      { id: "paladin", label: "🛡️ Paladin", desc: "Équilibre & bien-être", bonus: "Santé" },
+      { id: "warrior", label: "⚔️ Guerrier.e", desc: "Force & discipline", bonus: "Physique" },
+      { id: "mage", label: "🧙 Mage", desc: "Savoir & créativité", bonus: "Savoir" },
+      { id: "rogue", label: "🗡️ Roublard.e", desc: "Agilité & productivité", bonus: "Carrière" },
+      { id: "paladin", label: "🛡️ Paladin.e", desc: "Équilibre & bien-être", bonus: "Vitalité" },
       { id: "bard", label: "🎶 Barde", desc: "Social & inspiration", bonus: "Social" },
     ];
 
-    const CATEGORIES = ["Fitness", "Santé", "Travail", "Apprentissage", "Social", "Personnel"];
+    const CATEGORIES = ["Physique", "Vitalité", "Carrière", "Savoir", "Social", "Aventure"];
     const CAT_COLORS = {
-      Fitness: "#e05252", Santé: "#52b0e0", Travail: "#e0a852",
-      Apprentissage: "#9b59e0", Social: "#52e08a", Personnel: "#e07852",
+      Physique: "#e05252", Vitalité: "#52b0e0", Carrière: "#e0a852",
+      Savoir: "#9b59e0", Social: "#52e08a", Aventure: "#e07852",
     };
 
     // ── XP / LEVEL ──────────────────────────────────────────────────
@@ -262,7 +262,7 @@
         <div style={S.fullCenter}>
           <div style={{ ...S.card, animation: "fadeUp .5s ease" }}>
             <div style={S.runeRow}>✦ ✦ ✦</div>
-            <h2 style={S.goldTitle}>Ton Héros</h2>
+            <h2 style={S.goldTitle}>Ton Personnage</h2>
             <p style={S.muted}>Étape 1 sur 4 — Choisis ton nom</p>
             <div style={{ marginTop: 28 }}>
               <label style={S.label}>Nom de ton personnage</label>
@@ -304,8 +304,8 @@
     }
 
     function OnboardGoals({ game, setGame, onNext }) {
-      const [goals, setGoals] = useState([{ title: "", category: "Personnel", xpReward: 500, deadline: "", done: false, id: 1 }]);
-      const add = () => setGoals(g => [...g, { title: "", category: "Personnel", xpReward: 500, deadline: "", done: false, id: Date.now() }]);
+      const [goals, setGoals] = useState([{ title: "", category: "Aventure", xpReward: 500, deadline: "", done: false, id: 1 }]);
+      const add = () => setGoals(g => [...g, { title: "", category: "Aventure", xpReward: 500, deadline: "", done: false, id: Date.now() }]);
       const remove = i => setGoals(g => g.filter((_, idx) => idx !== i));
       const upd = (i, k, v) => setGoals(g => g.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
       return (
@@ -342,10 +342,10 @@
 
     function OnboardActions({ game, setGame, onNext }) {
       const [actions, setActions] = useState([
-        { id: 1, title: "", category: "Fitness", xp: 20, frequency: "daily" },
-        { id: 2, title: "", category: "Apprentissage", xp: 15, frequency: "daily" },
+        { id: 1, title: "", category: "Physique", xp: 20, frequency: "daily" },
+        { id: 2, title: "", category: "Savoir", xp: 15, frequency: "daily" },
       ]);
-      const add = () => setActions(a => [...a, { id: Date.now(), title: "", category: "Personnel", xp: 15, frequency: "daily" }]);
+      const add = () => setActions(a => [...a, { id: Date.now(), title: "", category: "Aventure", xp: 15, frequency: "daily" }]);
       const remove = i => setActions(a => a.filter((_, idx) => idx !== i));
       const upd = (i, k, v) => setActions(a => a.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
       return (
@@ -593,7 +593,7 @@
     // ════════════════════════════════════════════════════════════════
     function TabQuests({ game, updateGame, showToast }) {
       const [showAdd, setShowAdd] = useState(false);
-      const [ng, setNg] = useState({ title: "", category: "Personnel", xpReward: 500, deadline: "" });
+      const [ng, setNg] = useState({ title: "", category: "Aventure", xpReward: 500, deadline: "" });
 
       const complete = id => {
         updateGame(g => {
@@ -607,7 +607,7 @@
       const addGoal = () => {
         if (!ng.title.trim()) return;
         updateGame(g => ({ ...g, goals: [...(g.goals || []), { ...ng, id: Date.now(), done: false }] }));
-        setNg({ title: "", category: "Personnel", xpReward: 500, deadline: "" });
+        setNg({ title: "", category: "Aventure", xpReward: 500, deadline: "" });
         setShowAdd(false);
         showToast("Nouvelle quête ajoutée !");
       };
