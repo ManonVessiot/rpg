@@ -163,14 +163,23 @@
       }, []);
 
       useEffect(() => {
-        sb.auth.getSession().then(({ data: { session } }) => {
-          setSession(session);
-          if (session) loadAndStart(session.user.id);
-          else setLoading(false);
-        });
+        // Détecte si c'est un retour de lien magique
+        const isCallback = window.location.hash.includes("access_token")
+          || window.location.search.includes("code=");
+
+        if (!isCallback) {
+          // Chargement normal
+          sb.auth.getSession().then(({ data: { session } }) => {
+            setSession(session);
+            if (session) loadAndStart(session.user.id);
+            else setLoading(false);
+          });
+        }
+        // Dans les deux cas, on écoute les changements d'auth
         const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => {
           setSession(s);
           if (s) loadAndStart(s.user.id);
+          else if (isCallback) setLoading(false); // callback sans session = erreur
         });
         return () => subscription.unsubscribe();
       }, [loadAndStart]);
