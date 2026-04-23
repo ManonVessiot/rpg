@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Life RPG</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap"
+    rel="stylesheet" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #0f0b04;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #1a1208;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #5a3d0a;
+      border-radius: 3px;
+    }
+
+    input[type=date]::-webkit-calendar-picker-indicator {
+      filter: invert(1) opacity(0.4);
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(16px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .5
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ═══════════════════════════════════════════════════════════════
+    //  ⚙️  CONFIGURATION SUPABASE  — remplis ces deux valeurs
+    // ═══════════════════════════════════════════════════════════════
+    const SUPABASE_URL = "https://arsmnelxpsmzzyxlevky.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_V8eX4Snubbi3e0WUKP74Gw_M-D1z4QM";
+    // ═══════════════════════════════════════════════════════════════
+
+    const { useState, useEffect, useRef, useCallback } = React;
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ── DB HELPERS ──────────────────────────────────────────────────
+    async function dbLoad(userId) {
+      const { data, error } = await sb
+        .from("life_rpg_saves")
+        .select("data")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (error) { console.error("load error", error); return null; }
+      return data ? data.data : null;
+    }
+
+    async function dbSave(userId, gameData) {
+      const { error } = await sb
+        .from("life_rpg_saves")
+        .upsert({ user_id: userId, data: gameData, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" });
+      if (error) console.error("save error", error);
+    }
+
+    // ── CONSTANTES ──────────────────────────────────────────────────
+    const CLASSES = [
+      { id: "warrior", label: "⚔️ Guerrier.e", desc: "Force & discipline", bonus: "Physique" },
+      { id: "mage", label: "🧙 Mage", desc: "Savoir & créativité", bonus: "Savoir" },
+      { id: "rogue", label: "🗡️ Roublard.e", desc: "Agilité & productivité", bonus: "Carrière" },
+      { id: "paladin", label: "🛡️ Paladin.e", desc: "Équilibre & bien-être", bonus: "Vitalité" },
+      { id: "bard", label: "🎶 Barde", desc: "Social & inspiration", bonus: "Social" },
+    ];
+
+    const CATEGORIES = ["Physique", "Vitalité", "Carrière", "Savoir", "Social", "Aventure"];
+    const CAT_COLORS = {
+      Physique: "#e05252", Vitalité: "#52b0e0", Carrière: "#e0a852",
+      Savoir: "#9b59e0", Social: "#52e08a", Aventure: "#e07852",
+    };
+
+    // ── XP / LEVEL ──────────────────────────────────────────────────
+    const xpForLevel = lvl => Math.floor(100 * Math.pow(1.4, lvl - 1));
+    const totalXpForLvl = lvl => { let t = 0; for (let i = 1; i < lvl; i++) t += xpForLevel(i); return t; };
+    const computeLevel = xp => { let l = 1; while (xp >= totalXpForLvl(l + 1)) l++; return l; };
+    const TODAY = () => new Date().toISOString().slice(0, 10);
+    const fmt = d => new Date(d + "T12:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+
+    // ════════════════════════════════════════════════════════════════
+    //  ROOT
+    // ════════════════════════════════════════════════════════════════
+    function App() {
+      const [session, setSession] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [game, setGame] = useState(null);
+      const [screen, setScreen] = useState(0);   // 0:boot 1-4:onboard 5:main
+      const [tab, setTab] = useState("dashboard");
+      const [toast, setToast] = useState(null);
+      const toastRef = useRef(null);
+
+      const showToast = (msg, type = "success") => {
+        setToast({ msg, type });
+        clearTimeout(toastRef.current);
+        toastRef.current = setTimeout(() => setToast(null), 3200);
+      };
+
+      const loadAndStart = useCallback(async (userId) => {
+        const saved = await dbLoad(userId);
+        if (saved) { setGame(saved); setScreen(5); }
+        else { setScreen(1); }
+        setLoading(false);
+      }, []);
+
+      useEffect(() => {
+        // Détecte si c'est un retour de lien magique
+        const isCallback = window.location.hash.includes("access_token")
+          || window.location.search.includes("code=");
+
+        if (!isCallback) {
+          // Chargement normal
+          sb.auth.getSession().then(({ data: { session } }) => {
+            setSession(session);
+            if (session) loadAndStart(session.user.id);
+            else setLoading(false);
+          });
+        }
+        // Dans les deux cas, on écoute les changements d'auth
+        const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => {
+          setSession(s);
+          if (s) loadAndStart(s.user.id);
+          else if (isCallback) setLoading(false); // callback sans session = erreur
+        });
+        return () => subscription.unsubscribe();
+      }, [loadAndStart]);
+
+      const updateGame = useCallback((fn) => {
+        setGame(prev => {
+          const next = fn({ ...prev });
+          if (session) dbSave(session.user.id, next);
+          return next;
+        });
+      }, [session]);
+
+      const logout = async () => {
+        await sb.auth.signOut();
+        setSession(null); setGame(null); setScreen(0); setLoading(false);
+      };
+
+      if (loading) return <Splash />;
+      if (!session) return <AuthScreen showToast={showToast} toast={toast} />;
+      if (screen === 1) return <OnboardName onNext={n => { setGame({ name: n, class: null, xp: 0, goals: [], actions: [], log: [], created: TODAY() }); setScreen(2); }} />;
+      if (screen === 2) return <OnboardClass game={game} setGame={setGame} onNext={() => setScreen(3)} />;
+      if (screen === 3) return <OnboardGoals game={game} setGame={setGame} onNext={() => setScreen(4)} />;
+      if (screen === 4) return <OnboardActions game={game} setGame={setGame} onNext={async () => { await dbSave(session.user.id, game); setScreen(5); }} />;
+      return <MainApp game={game} updateGame={updateGame} tab={tab} setTab={setTab} showToast={showToast} toast={toast} logout={logout} userEmail={session.user.email} />;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  AUTH SCREEN
+    // ════════════════════════════════════════════════════════════════
+    function AuthScreen({ showToast, toast }) {
+      const [email, setEmail] = useState("");
+      const [sent, setSent] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [mode, setMode] = useState("choice"); // "choice" | "email"
+
+      const handleGoogle = async () => {
+        setBusy(true);
+        const { error } = await sb.auth.signInWithOAuth({
+          provider: "google",
+          options: { redirectTo: window.location.origin + window.location.pathname }
+        });
+        if (error) { showToast("Erreur Google : " + error.message, "error"); setBusy(false); }
+      };
+
+      const handleMagic = async () => {
+        if (!email.trim()) return;
+        setBusy(true);
+        const { error } = await sb.auth.signInWithOtp({
+          email: email.trim(),
+          options: { emailRedirectTo: window.location.origin + window.location.pathname }
+        });
+        setBusy(false);
+        if (error) showToast("Erreur : " + error.message, "error");
+        else setSent(true);
+      };
+
+      return (
+        <div style={S.fullCenter}>
+          <div style={{ ...S.card, maxWidth: 400, animation: "fadeUp .5s ease" }}>
+            <div style={S.runeRow}>✦ ✦ ✦</div>
+            <h1 style={S.goldTitle}>Life RPG</h1>
+            <p style={S.muted}>Transforme ta vie en épopée légendaire</p>
+
+            {/* ── CHOIX DE MÉTHODE ── */}
+            {mode === "choice" && (
+              <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 12 }}>
+                {/* Bouton Google */}
+                <button
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                    background: "#fff", color: "#1a1208", border: "none", borderRadius: 6,
+                    padding: "12px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "Cinzel,serif", letterSpacing: .3, opacity: busy ? .6 : 1,
+                    boxShadow: "0 2px 8px #00000044"
+                  }}
+                  onClick={handleGoogle}
+                  disabled={busy}
+                >
+                  <svg width="18" height="18" viewBox="0 0 48 48">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.29-8.16 2.29-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                  </svg>
+                  Continuer avec Google
+                </button>
+
+                {/* Séparateur */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0" }}>
+                  <div style={{ flex: 1, height: 1, background: "#2a1e06" }} />
+                  <span style={{ color: "#444", fontSize: 12 }}>ou</span>
+                  <div style={{ flex: 1, height: 1, background: "#2a1e06" }} />
+                </div>
+
+                {/* Lien magique */}
+                <button style={{ ...S.btnSec, width: "100%", textAlign: "center" }} onClick={() => setMode("email")}>
+                  ✉️ Connexion par lien magique
+                </button>
+
+                <p style={{ color: "#444", fontSize: 11, textAlign: "center", marginTop: 4 }}>
+                  Aucun mot de passe requis.
+                </p>
+              </div>
+            )}
+
+            {/* ── FORMULAIRE EMAIL ── */}
+            {mode === "email" && !sent && (
+              <div style={{ marginTop: 28 }}>
+                <label style={S.label}>Ton adresse email</label>
+                <input
+                  style={S.input} type="email" placeholder="heros@aventure.com"
+                  value={email} onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleMagic()}
+                  autoFocus
+                />
+                <button style={{ ...S.btnPrim, width: "100%", marginTop: 12, opacity: busy ? .6 : 1 }} onClick={handleMagic} disabled={busy}>
+                  {busy ? "Envoi en cours..." : "✉️ Recevoir mon lien magique"}
+                </button>
+                <button style={{ ...S.btnSec, width: "100%", marginTop: 10, textAlign: "center" }} onClick={() => setMode("choice")}>
+                  ← Retour
+                </button>
+              </div>
+            )}
+
+            {/* ── EMAIL ENVOYÉ ── */}
+            {mode === "email" && sent && (
+              <div style={{ marginTop: 28, textAlign: "center" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>📬</div>
+                <p style={{ color: "#c9a84c", fontFamily: "Cinzel,serif", fontSize: 15 }}>Lien magique envoyé !</p>
+                <p style={{ color: "#888", fontSize: 13, marginTop: 8, lineHeight: 1.7 }}>
+                  Consulte ta boîte mail <strong style={{ color: "#f0dfa0" }}>{email}</strong><br />
+                  et clique sur le lien pour rejoindre l'aventure.
+                </p>
+                <button style={{ ...S.btnSec, marginTop: 20 }} onClick={() => { setSent(false); setMode("choice"); }}>
+                  ← Retour
+                </button>
+              </div>
+            )}
+          </div>
+          {toast && <Toast toast={toast} />}
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  ONBOARDING
+    // ════════════════════════════════════════════════════════════════
+    function OnboardName({ onNext }) {
+      const [name, setName] = useState("");
+      return (
+        <div style={S.fullCenter}>
+          <div style={{ ...S.card, animation: "fadeUp .5s ease" }}>
+            <div style={S.runeRow}>✦ ✦ ✦</div>
+            <h2 style={S.goldTitle}>Ton Personnage</h2>
+            <p style={S.muted}>Étape 1 sur 4 — Choisis ton nom</p>
+            <div style={{ marginTop: 28 }}>
+              <label style={S.label}>Nom de ton personnage</label>
+              <input style={S.input} placeholder="Ex: Arthus le Déterminé" value={name}
+                onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && name.trim() && onNext(name.trim())} autoFocus />
+            </div>
+            <button style={{ ...S.btnPrim, marginTop: 20, width: "100%", opacity: name.trim() ? 1 : .4 }}
+              onClick={() => name.trim() && onNext(name.trim())}>Suivant →</button>
+          </div>
+        </div>
+      );
+    }
+
+    function OnboardClass({ game, setGame, onNext }) {
+      const [sel, setSel] = useState(null);
+      return (
+        <div style={S.fullCenter}>
+          <div style={{ ...S.card, maxWidth: 520, animation: "fadeUp .5s ease" }}>
+            <div style={S.runeRow}>✦ ✦ ✦</div>
+            <h2 style={S.goldTitle}>Classe</h2>
+            <p style={S.muted}>Étape 2 sur 4 — Bonus XP x1.5 dans ton domaine</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 20 }}>
+              {CLASSES.map(c => (
+                <div key={c.id} style={{ ...S.classRow, ...(sel === c.id ? S.classRowSel : {}) }} onClick={() => setSel(c.id)}>
+                  <span style={{ fontSize: 22 }}>{c.label.split(" ")[0]}</span>
+                  <div>
+                    <div style={{ fontWeight: 700, color: "#f0dfa0", fontSize: 14 }}>{c.label.slice(c.label.indexOf(" ") + 1)}</div>
+                    <div style={{ fontSize: 12, color: "#888" }}>{c.desc} · <span style={{ color: "#c9a84c" }}>+50% XP {c.bonus}</span></div>
+                  </div>
+                  {sel === c.id && <span style={{ marginLeft: "auto", color: "#c9a84c", fontSize: 18 }}>✓</span>}
+                </div>
+              ))}
+            </div>
+            <button style={{ ...S.btnPrim, marginTop: 20, width: "100%", opacity: sel ? 1 : .4 }}
+              onClick={() => { if (sel) { setGame(g => ({ ...g, class: sel })); onNext(); } }}>Suivant →</button>
+          </div>
+        </div>
+      );
+    }
+
+    function OnboardGoals({ game, setGame, onNext }) {
+      const [goals, setGoals] = useState([{ title: "", category: "Aventure", xpReward: 500, deadline: "", done: false, id: 1 }]);
+      const add = () => setGoals(g => [...g, { title: "", category: "Aventure", xpReward: 500, deadline: "", done: false, id: Date.now() }]);
+      const remove = i => setGoals(g => g.filter((_, idx) => idx !== i));
+      const upd = (i, k, v) => setGoals(g => g.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
+      return (
+        <div style={S.fullCenter}>
+          <div style={{ ...S.card, maxWidth: 540, animation: "fadeUp .5s ease" }}>
+            <div style={S.runeRow}>✦ ✦ ✦</div>
+            <h2 style={S.goldTitle}>Quêtes Principales</h2>
+            <p style={S.muted}>Étape 3 sur 4 — Tes grands objectifs de vie (3–5 recommandés)</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 18, maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
+              {goals.map((g, i) => (
+                <div key={g.id} style={S.miniCard}>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input style={{ ...S.input, flex: 1 }} placeholder="Ex: Courir un marathon" value={g.title} onChange={e => upd(i, "title", e.target.value)} />
+                    {goals.length > 1 && <button style={S.btnX} onClick={() => remove(i)}>✕</button>}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <select style={{ ...S.input, flex: 1, minWidth: 110 }} value={g.category} onChange={e => upd(i, "category", e.target.value)}>
+                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                    <input style={{ ...S.input, width: 130 }} type="date" value={g.deadline} onChange={e => upd(i, "deadline", e.target.value)} />
+                    <input style={{ ...S.input, width: 80 }} type="number" min={100} max={5000} step={100} value={g.xpReward} onChange={e => upd(i, "xpReward", +e.target.value)} title="XP récompense" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button style={{ ...S.btnSec, marginTop: 10, width: "100%" }} onClick={add}>+ Ajouter une quête</button>
+            <button style={{ ...S.btnPrim, marginTop: 10, width: "100%", opacity: goals.some(g => g.title.trim()) ? 1 : .4 }}
+              onClick={() => { const v = goals.filter(g => g.title.trim()); if (!v.length) return; setGame(p => ({ ...p, goals: v })); onNext(); }}>
+              Suivant →</button>
+          </div>
+        </div>
+      );
+    }
+
+    function OnboardActions({ game, setGame, onNext }) {
+      const [actions, setActions] = useState([
+        { id: 1, title: "", category: "Physique", xp: 20, frequency: "daily" },
+        { id: 2, title: "", category: "Savoir", xp: 15, frequency: "daily" },
+      ]);
+      const add = () => setActions(a => [...a, { id: Date.now(), title: "", category: "Aventure", xp: 15, frequency: "daily" }]);
+      const remove = i => setActions(a => a.filter((_, idx) => idx !== i));
+      const upd = (i, k, v) => setActions(a => a.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
+      return (
+        <div style={S.fullCenter}>
+          <div style={{ ...S.card, maxWidth: 540, animation: "fadeUp .5s ease" }}>
+            <div style={S.runeRow}>✦ ✦ ✦</div>
+            <h2 style={S.goldTitle}>Carte d'Actions</h2>
+            <p style={S.muted}>Étape 4 sur 4 — Tes habitudes quotidiennes / hebdomadaires</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 18, maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
+              {actions.map((a, i) => (
+                <div key={a.id} style={S.miniCard}>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input style={{ ...S.input, flex: 1 }} placeholder="Ex: 30 min de sport" value={a.title} onChange={e => upd(i, "title", e.target.value)} />
+                    {actions.length > 1 && <button style={S.btnX} onClick={() => remove(i)}>✕</button>}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <select style={{ ...S.input, flex: 1, minWidth: 110 }} value={a.category} onChange={e => upd(i, "category", e.target.value)}>
+                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                    <select style={{ ...S.input, width: 110 }} value={a.frequency} onChange={e => upd(i, "frequency", e.target.value)}>
+                      <option value="daily">Quotidien</option>
+                      <option value="weekly">Hebdo</option>
+                    </select>
+                    <input style={{ ...S.input, width: 70 }} type="number" min={5} max={500} value={a.xp} onChange={e => upd(i, "xp", +e.target.value)} title="XP" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button style={{ ...S.btnSec, marginTop: 10, width: "100%" }} onClick={add}>+ Ajouter une action</button>
+            <button style={{ ...S.btnPrim, marginTop: 10, width: "100%" }}
+              onClick={() => { setGame(p => ({ ...p, actions: actions.filter(a => a.title.trim()) })); onNext(); }}>
+              ⚔️ Lancer l'aventure</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  MAIN APP
+    // ════════════════════════════════════════════════════════════════
+    function MainApp({ game, updateGame, tab, setTab, showToast, toast, logout, userEmail }) {
+      const xp = game.xp || 0;
+      const level = computeLevel(xp);
+      const curXp = totalXpForLvl(level);
+      const nextXp = totalXpForLvl(level + 1);
+      const pct = ((xp - curXp) / (nextXp - curXp)) * 100;
+      const cls = CLASSES.find(c => c.id === game.class) || CLASSES[0];
+
+      return (
+        <div style={S.app}>
+          {/* HEADER */}
+          <div style={S.header}>
+            <div>
+              <div style={{ fontFamily: "Cinzel,serif", color: "#c9a84c", fontSize: 17, fontWeight: 700 }}>{game.name}</div>
+              <div style={{ fontSize: 11, color: "#888", marginTop: 1 }}>{cls.label} · Niveau {level}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ color: "#52b0e0", fontWeight: 700, fontSize: 13 }}>⭐ {xp.toLocaleString()} XP</div>
+              <div style={{ marginTop: 5, width: 130 }}>
+                <div style={S.barBg}><div style={{ ...S.barFill, width: `${Math.min(100, pct)}%` }} /></div>
+                <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+                  {(xp - curXp).toLocaleString()} / {(nextXp - curXp).toLocaleString()} → Niv.{level + 1}
+                </div>
+              </div>
+            </div>
+            <button style={{ ...S.btnSec, fontSize: 11, padding: "5px 10px" }} onClick={logout} title={userEmail}>↩ Déco</button>
+          </div>
+
+          {/* NAV */}
+          <div style={S.nav}>
+            {[{ id: "dashboard", icon: "🗺️", label: "Carte" }, { id: "daily", icon: "📋", label: "Journal" },
+            { id: "quests", icon: "🏆", label: "Quêtes" }, { id: "log", icon: "📜", label: "Historique" }].map(t => (
+              <button key={t.id} style={{ ...S.navBtn, ...(tab === t.id ? S.navActive : {}) }} onClick={() => setTab(t.id)}>
+                <span style={{ fontSize: 18 }}>{t.icon}</span>
+                <span style={{ fontSize: 11 }}>{t.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* CONTENT */}
+          <div style={S.content}>
+            {tab === "dashboard" && <TabDashboard game={game} level={level} cls={cls} />}
+            {tab === "daily" && <TabDaily game={game} updateGame={updateGame} showToast={showToast} />}
+            {tab === "quests" && <TabQuests game={game} updateGame={updateGame} showToast={showToast} />}
+            {tab === "log" && <TabLog game={game} />}
+          </div>
+
+          {toast && <Toast toast={toast} />}
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  TAB — DASHBOARD
+    // ════════════════════════════════════════════════════════════════
+    function TabDashboard({ game, level, cls }) {
+      const today = TODAY();
+      const todayLog = (game.log || []).find(l => l.date === today);
+      const doneToday = todayLog ? todayLog.done : [];
+      const streak = calcStreak(game.log || []);
+
+      const catXp = {};
+      CATEGORIES.forEach(c => catXp[c] = 0);
+      (game.log || []).forEach(l => (l.xpBreakdown || []).forEach(x => { catXp[x.cat] = (catXp[x.cat] || 0) + x.xp; }));
+      const maxCatXp = Math.max(...Object.values(catXp), 1);
+
+      return (
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
+            <StatTile icon="🔥" label="Série" val={`${streak}j`} />
+            <StatTile icon="⚔️" label="Niveau" val={level} />
+            <StatTile icon="✅" label="Aujourd'hui" val={`${doneToday.length}/${(game.actions || []).length}`} />
+          </div>
+
+          <div style={S.sectionTitle}>🗺️ Carte d'Actions</div>
+          {CATEGORIES.map(cat => {
+            const catActions = (game.actions || []).filter(a => a.category === cat);
+            if (!catActions.length) return null;
+            return (
+              <div key={cat} style={{ ...S.catBlock, borderLeft: `3px solid ${CAT_COLORS[cat]}`, marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontFamily: "Cinzel,serif", color: CAT_COLORS[cat], fontSize: 12, fontWeight: 700 }}>{cat}</span>
+                  <span style={{ fontSize: 11, color: "#666" }}>⭐ {(catXp[cat] || 0).toLocaleString()} XP</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {catActions.map(a => {
+                    const done = doneToday.includes(a.id);
+                    return (
+                      <div key={a.id} style={{
+                        display: "flex", alignItems: "center", gap: 5, borderRadius: 99, padding: "4px 10px",
+                        background: done ? CAT_COLORS[cat] + "33" : "#1e1608", border: `1px solid ${done ? CAT_COLORS[cat] : "#2a1e06"}`
+                      }}>
+                        <span style={{ fontSize: 11 }}>{done ? "✅" : "⬜"}</span>
+                        <span style={{ fontSize: 12, color: "#ddd" }}>{a.title}</span>
+                        <span style={{ fontSize: 10, color: "#c9a84c" }}>+{a.xp}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+
+          <div style={S.sectionTitle}>📊 XP par Domaine</div>
+          {CATEGORIES.map(cat => (
+            <div key={cat} style={{ marginBottom: 9 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                <span style={{ color: CAT_COLORS[cat] }}>{cat}</span>
+                <span style={{ color: "#666" }}>{(catXp[cat] || 0).toLocaleString()} XP</span>
+              </div>
+              <div style={S.barBg}>
+                <div style={{ ...S.barFill, width: `${((catXp[cat] || 0) / maxCatXp) * 100}%`, background: CAT_COLORS[cat] }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  TAB — JOURNAL QUOTIDIEN
+    // ════════════════════════════════════════════════════════════════
+    function TabDaily({ game, updateGame, showToast }) {
+      const today = TODAY();
+      const existing = (game.log || []).find(l => l.date === today) || { date: today, done: [], xpBreakdown: [], note: "" };
+      const [done, setDone] = useState(existing.done || []);
+      const [note, setNote] = useState(existing.note || "");
+      const [saved, setSaved] = useState(false);
+
+      const toggle = id => { setSaved(false); setDone(d => d.includes(id) ? d.filter(x => x !== id) : [...d, id]); };
+
+      const handleSave = () => {
+        const bonusCat = (CLASSES.find(c => c.id === game.class) || CLASSES[0]).bonus;
+        const xpBreakdown = [];
+        let totalXp = 0;
+        done.forEach(id => {
+          const a = (game.actions || []).find(x => x.id === id);
+          if (!a) return;
+          const earned = Math.floor(a.xp * (a.category === bonusCat ? 1.5 : 1));
+          xpBreakdown.push({ id, cat: a.category, xp: earned });
+          totalXp += earned;
+        });
+        const prevXp = (existing.xpBreakdown || []).reduce((s, x) => s + x.xp, 0);
+        updateGame(g => {
+          const logs = (g.log || []).filter(l => l.date !== today);
+          return { ...g, xp: (g.xp || 0) + totalXp - prevXp, log: [...logs, { date: today, done, xpBreakdown, note }] };
+        });
+        setSaved(true);
+        showToast(`+${totalXp} XP gagnés aujourd'hui ! 🎉`);
+      };
+
+      return (
+        <div>
+          <div style={S.sectionTitle}>📋 Journal du {fmt(today)}</div>
+          {!(game.actions || []).length && <p style={S.empty}>Aucune action définie dans la Carte.</p>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {CATEGORIES.map(cat => {
+              const catA = (game.actions || []).filter(a => a.category === cat);
+              if (!catA.length) return null;
+              return (
+                <div key={cat} style={{ ...S.catBlock, borderLeft: `3px solid ${CAT_COLORS[cat]}` }}>
+                  <div style={{ color: CAT_COLORS[cat], fontFamily: "Cinzel,serif", fontSize: 12, fontWeight: 700, marginBottom: 8 }}>{cat}</div>
+                  {catA.map(a => {
+                    const isDone = done.includes(a.id);
+                    return (
+                      <div key={a.id} style={{
+                        display: "flex", alignItems: "center", gap: 12, padding: "9px 6px", borderRadius: 6,
+                        cursor: "pointer", marginBottom: 3, background: isDone ? "#1e3320" : "transparent", transition: "background .15s"
+                      }}
+                        onClick={() => toggle(a.id)}>
+                        <div style={{
+                          width: 22, height: 22, borderRadius: 4, border: `2px solid ${CAT_COLORS[cat]}`, flexShrink: 0,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          background: isDone ? CAT_COLORS[cat] : "transparent", transition: "all .15s"
+                        }}>
+                          {isDone && <span style={{ color: "#000", fontSize: 14, lineHeight: 1, fontWeight: 700 }}>✓</span>}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 14, color: isDone ? "#c9a84c" : "#ddd" }}>{a.title}</div>
+                          <div style={{ fontSize: 11, color: "#666" }}>{a.frequency === "daily" ? "Quotidien" : "Hebdo"}</div>
+                        </div>
+                        <div style={{ color: "#c9a84c", fontSize: 12 }}>+{a.xp} XP</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <label style={S.label}>📝 Note du jour</label>
+            <textarea style={{ ...S.input, minHeight: 80, resize: "vertical" }}
+              placeholder="Comment s'est passée ta journée ?"
+              value={note} onChange={e => { setNote(e.target.value); setSaved(false); }} />
+          </div>
+          <button style={{ ...S.btnPrim, marginTop: 12, width: "100%" }} onClick={handleSave}>
+            {saved ? "✅ Sauvegardé !" : "💾 Enregistrer ma journée"}
+          </button>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  TAB — QUÊTES
+    // ════════════════════════════════════════════════════════════════
+    function TabQuests({ game, updateGame, showToast }) {
+      const [showAdd, setShowAdd] = useState(false);
+      const [ng, setNg] = useState({ title: "", category: "Aventure", xpReward: 500, deadline: "" });
+
+      const complete = id => {
+        updateGame(g => {
+          const goal = g.goals.find(x => x.id === id);
+          if (!goal || goal.done) return g;
+          return { ...g, xp: (g.xp || 0) + goal.xpReward, goals: g.goals.map(x => x.id === id ? { ...x, done: true, completedAt: TODAY() } : x) };
+        });
+        showToast("Quête accomplie ! 🏆 XP ajoutés !");
+      };
+
+      const addGoal = () => {
+        if (!ng.title.trim()) return;
+        updateGame(g => ({ ...g, goals: [...(g.goals || []), { ...ng, id: Date.now(), done: false }] }));
+        setNg({ title: "", category: "Aventure", xpReward: 500, deadline: "" });
+        setShowAdd(false);
+        showToast("Nouvelle quête ajoutée !");
+      };
+
+      const active = (game.goals || []).filter(g => !g.done);
+      const completed = (game.goals || []).filter(g => g.done);
+
+      return (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={S.sectionTitle}>🏆 Quêtes Principales</div>
+            <button style={{ ...S.btnSec, fontSize: 12 }} onClick={() => setShowAdd(s => !s)}>+ Quête</button>
+          </div>
+
+          {showAdd && (
+            <div style={{ ...S.miniCard, marginBottom: 14 }}>
+              <input style={{ ...S.input, marginBottom: 8 }} placeholder="Titre de la quête" value={ng.title} onChange={e => setNg(g => ({ ...g, title: e.target.value }))} />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <select style={{ ...S.input, flex: 1, minWidth: 110 }} value={ng.category} onChange={e => setNg(g => ({ ...g, category: e.target.value }))}>
+                  {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                </select>
+                <input style={{ ...S.input, width: 130 }} type="date" value={ng.deadline} onChange={e => setNg(g => ({ ...g, deadline: e.target.value }))} />
+                <input style={{ ...S.input, width: 80 }} type="number" min={100} max={5000} step={100} value={ng.xpReward} onChange={e => setNg(g => ({ ...g, xpReward: +e.target.value }))} />
+              </div>
+              <button style={{ ...S.btnPrim, marginTop: 8, width: "100%" }} onClick={addGoal}>Ajouter</button>
+            </div>
+          )}
+
+          {active.map(g => (
+            <div key={g.id} style={{ ...S.catBlock, borderLeft: `3px solid ${CAT_COLORS[g.category]}`, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontFamily: "Cinzel,serif", color: "#f0dfa0", fontSize: 14, fontWeight: 700 }}>{g.title}</div>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
+                    <span style={{ color: CAT_COLORS[g.category] }}>{g.category}</span>
+                    {g.deadline && <span> · ⏳ {fmt(g.deadline)}</span>}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 10 }}>
+                  <div style={{ color: "#c9a84c", fontWeight: 700 }}>+{g.xpReward} XP</div>
+                  <button style={{ ...S.btnPrim, fontSize: 11, padding: "5px 10px", marginTop: 6 }} onClick={() => complete(g.id)}>✓ Accomplie</button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {!active.length && !completed.length && <p style={S.empty}>Aucune quête. Clique sur "+ Quête" pour en ajouter.</p>}
+
+          {completed.length > 0 && (
+            <>
+              <div style={{ ...S.sectionTitle, marginTop: 16, opacity: .5 }}>✅ Accomplies</div>
+              {completed.map(g => (
+                <div key={g.id} style={{ ...S.catBlock, borderLeft: "3px solid #333", marginBottom: 8, opacity: .5 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ color: "#888", fontSize: 13, textDecoration: "line-through" }}>{g.title}</div>
+                      {g.completedAt && <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>{fmt(g.completedAt)}</div>}
+                    </div>
+                    <div style={{ color: "#666" }}>+{g.xpReward} XP</div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  TAB — HISTORIQUE
+    // ════════════════════════════════════════════════════════════════
+    function TabLog({ game }) {
+      const logs = [...(game.log || [])].sort((a, b) => b.date.localeCompare(a.date));
+      if (!logs.length) return <p style={S.empty}>Aucune entrée. Remplis ton journal quotidien !</p>;
+      return (
+        <div>
+          <div style={S.sectionTitle}>📜 Chroniques</div>
+          {logs.map(l => {
+            const dayXp = (l.xpBreakdown || []).reduce((s, x) => s + x.xp, 0);
+            const acts = (l.done || []).map(id => (game.actions || []).find(a => a.id === id)).filter(Boolean);
+            return (
+              <div key={l.date} style={{ ...S.catBlock, marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontFamily: "Cinzel,serif", color: "#c9a84c", fontWeight: 700, fontSize: 13 }}>{fmt(l.date)}</span>
+                  <span style={{ color: "#52b0e0", fontWeight: 700 }}>+{dayXp} XP</span>
+                </div>
+                {acts.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+                    {acts.map(a => (
+                      <span key={a.id} style={{
+                        borderRadius: 99, padding: "3px 10px", fontSize: 11,
+                        background: CAT_COLORS[a.category] + "22", border: `1px solid ${CAT_COLORS[a.category]}55`,
+                        color: CAT_COLORS[a.category]
+                      }}>{a.title}</span>
+                    ))}
+                  </div>
+                )}
+                {l.note && <div style={{ fontSize: 12, color: "#888", marginTop: 8, fontStyle: "italic", lineHeight: 1.6 }}>"{l.note}"</div>}
+                {!acts.length && !l.note && <div style={{ fontSize: 12, color: "#555", marginTop: 6 }}>Aucune action complétée.</div>}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  SMALL COMPONENTS
+    // ════════════════════════════════════════════════════════════════
+    function Splash() {
+      return (
+        <div style={S.fullCenter}>
+          <div style={{ fontSize: 48, animation: "spin 1.2s linear infinite" }}>⚔️</div>
+          <p style={{ color: "#c9a84c", marginTop: 16, fontFamily: "Cinzel,serif" }}>Chargement…</p>
+        </div>
+      );
+    }
+
+    function StatTile({ icon, label, val }) {
+      return (
+        <div style={{
+          background: "#1a1208", border: "1px solid #2a1e06", borderRadius: 8, padding: "12px 8px",
+          textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 2
+        }}>
+          <div style={{ fontSize: 22 }}>{icon}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#f0dfa0", fontFamily: "Cinzel,serif" }}>{val}</div>
+          <div style={{ fontSize: 11, color: "#666" }}>{label}</div>
+        </div>
+      );
+    }
+
+    function Toast({ toast }) {
+      return (
+        <div style={{
+          position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
+          background: toast.type === "success" ? "#1e3d28" : "#4a1515", color: "#f0dfa0",
+          padding: "12px 22px", borderRadius: 8, fontFamily: "Cinzel,serif", fontWeight: 700, fontSize: 13,
+          zIndex: 9999, boxShadow: "0 4px 24px #000", border: "1px solid #c9a84c44",
+          animation: "fadeUp .3s ease", whiteSpace: "nowrap"
+        }}>
+          {toast.msg}
+        </div>
+      );
+    }
+
+    // ── HELPERS ──────────────────────────────────────────────────────
+    function calcStreak(logs) {
+      if (!logs.length) return 0;
+      const sorted = [...logs].sort((a, b) => b.date.localeCompare(a.date));
+      let streak = 0, d = new Date();
+      for (let i = 0; i < sorted.length; i++) {
+        const check = d.toISOString().slice(0, 10);
+        if (sorted[i].date === check && sorted[i].done.length > 0) { streak++; d.setDate(d.getDate() - 1); }
+        else if (sorted[i].date === check) { d.setDate(d.getDate() - 1); }
+        else break;
+      }
+      return streak;
+    }
+
+    // ── STYLES ───────────────────────────────────────────────────────
+    const S = {
+      app: {
+        fontFamily: "'Crimson Text',Georgia,serif", background: "#0f0b04", minHeight: "100vh", color: "#ddd",
+        display: "flex", flexDirection: "column", maxWidth: 600, margin: "0 auto"
+      },
+      fullCenter: {
+        display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh",
+        background: "#0f0b04", padding: 16
+      },
+      card: {
+        width: "100%", maxWidth: 440, background: "#140f06", border: "1px solid #3a2a0a",
+        borderRadius: 12, padding: 28, boxShadow: "0 0 60px #c9a84c11"
+      },
+      runeRow: { textAlign: "center", color: "#3a2a0a", letterSpacing: 8, marginBottom: 14, fontSize: 12 },
+      goldTitle: { fontFamily: "Cinzel,serif", color: "#c9a84c", fontSize: 26, fontWeight: 700, margin: "0 0 6px", textAlign: "center" },
+      muted: { color: "#666", fontSize: 13, textAlign: "center" },
+      label: { display: "block", color: "#888", fontSize: 13, marginBottom: 5 },
+      input: {
+        width: "100%", background: "#1c1608", border: "1px solid #3a2a0a", borderRadius: 6,
+        color: "#f0dfa0", padding: "9px 11px", fontSize: 14, fontFamily: "'Crimson Text',serif", outline: "none"
+      },
+      btnPrim: {
+        background: "linear-gradient(135deg,#7a5c0f,#c9a84c)", color: "#0f0b04", border: "none",
+        borderRadius: 6, padding: "11px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer",
+        fontFamily: "Cinzel,serif", letterSpacing: .5
+      },
+      btnSec: {
+        background: "transparent", color: "#c9a84c", border: "1px solid #3a2a0a", borderRadius: 6,
+        padding: "8px 14px", fontSize: 13, cursor: "pointer", fontFamily: "Cinzel,serif"
+      },
+      btnX: { background: "#3a0a0a", color: "#e05252", border: "none", borderRadius: 4, width: 28, height: 28, cursor: "pointer", flexShrink: 0 },
+      classRow: {
+        display: "flex", alignItems: "center", gap: 14, background: "#1c1608", border: "1px solid #2a1e06",
+        borderRadius: 8, padding: "11px 13px", cursor: "pointer", transition: "all .15s"
+      },
+      classRowSel: { background: "#2a1e06", border: "1px solid #c9a84c", boxShadow: "0 0 12px #c9a84c22" },
+      miniCard: { background: "#1c1608", border: "1px solid #2a1e06", borderRadius: 8, padding: 12 },
+      header: {
+        background: "#1a1008", borderBottom: "1px solid #2a1e06", padding: "13px 14px",
+        display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0, gap: 10
+      },
+      barBg: { background: "#1e1608", borderRadius: 99, height: 6, overflow: "hidden" },
+      barFill: { background: "linear-gradient(90deg,#c9a84c,#f0dfa0)", height: "100%", borderRadius: 99, transition: "width .5s" },
+      nav: { display: "flex", background: "#140f06", borderBottom: "1px solid #1e1608", flexShrink: 0 },
+      navBtn: {
+        flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "9px 4px",
+        background: "transparent", border: "none", color: "#666", cursor: "pointer", borderBottom: "2px solid transparent"
+      },
+      navActive: { color: "#c9a84c", borderBottomColor: "#c9a84c" },
+      content: { flex: 1, overflowY: "auto", padding: 14 },
+      sectionTitle: { fontFamily: "Cinzel,serif", color: "#c9a84c", fontSize: 13, fontWeight: 700, marginBottom: 10, letterSpacing: .5 },
+      catBlock: { background: "#17120a", border: "1px solid #1e1608", borderRadius: 8, padding: 12 },
+      empty: { color: "#555", textAlign: "center", padding: "40px 20px", fontStyle: "italic", lineHeight: 1.8, fontSize: 14 },
+    };
+
+    // ════════════════════════════════════════════════════════════════
+    //  MOUNT
+    // ════════════════════════════════════════════════════════════════
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+
+</html>
