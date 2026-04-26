@@ -95,57 +95,6 @@ function calcStreak(logs) {
   return streak;
 }
 
-// ── HELPERS SEMAINE ─────────────────────────────────────────────
-// Retourne le lundi de la semaine contenant dateStr
-function getWeekStart(dateStr) {
-  const d = new Date(dateStr + "T12:00:00");
-  const day = d.getDay(); // 0=dim, 1=lun...
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0,10);
-}
-function getWeekEnd(dateStr) {
-  const d = new Date(getWeekStart(dateStr) + "T12:00:00");
-  d.setDate(d.getDate() + 6);
-  return d.toISOString().slice(0,10);
-}
-// IDs des tâches hebdo faites au moins une fois dans la semaine de dateStr
-function getWeeklyDoneThisWeek(logs, dateStr, actions) {
-  const ws = getWeekStart(dateStr), we = getWeekEnd(dateStr);
-  const done = new Set();
-  logs.forEach(l => {
-    if (l.date >= ws && l.date <= we)
-      (l.done||[]).forEach(id => {
-        if ((actions||[]).find(a => a.id===id && a.frequency==="weekly")) done.add(id);
-      });
-  });
-  return done;
-}
-// Calcule le bilan d'une semaine (lundi→dimanche)
-function getWeekSummary(logs, weekStart, actions) {
-  const we = getWeekEnd(weekStart);
-  const weekLogs = logs.filter(l => l.date >= weekStart && l.date <= we);
-  if (!weekLogs.length) return null;
-
-  const dailyActions  = (actions||[]).filter(a => a.frequency==="daily");
-  const weeklyActions = (actions||[]).filter(a => a.frequency==="weekly");
-
-  const totalXp = weekLogs.reduce((s,l) => s + (l.xpBreakdown||[]).reduce((ss,x)=>ss+x.xp,0), 0);
-  const avgXp   = Math.round(totalXp / weekLogs.length);
-
-  const avgDaily = weekLogs.length
-    ? Math.round(weekLogs.reduce((s,l) => {
-        const doneDaily = (l.done||[]).filter(id => dailyActions.some(a=>a.id===id)).length;
-        return s + doneDaily;
-      }, 0) / weekLogs.length * 10) / 10
-    : 0;
-
-  const weeklyDoneIds = getWeeklyDoneThisWeek(logs, weekStart, actions);
-  const weeklyDone = weeklyDoneIds.size;
-
-  return { weekStart, we, daysLogged: weekLogs.length, totalXp, avgXp, avgDaily, weeklyDone, weeklyTotal: weeklyActions.length, dailyTotal: dailyActions.length };
-}
-
 // ════════════════════════════════════════════════════════════════
 //  ROOT
 // ════════════════════════════════════════════════════════════════
@@ -529,10 +478,8 @@ function TabDashboard({ game, level, cls }) {
   // Compteur : séparer quotidien et hebdo
   const dailyActions  = (game.actions||[]).filter(a=>a.frequency==="daily");
   const weeklyActions = (game.actions||[]).filter(a=>a.frequency==="weekly");
-  const doneDaily     = doneToday.filter(id=>dailyActions.some(a=>a.id===id)).length;
-  // Hebdo : faite n'importe quel jour cette semaine
-  const weeklyDoneSet = getWeeklyDoneThisWeek(game.log||[], today, game.actions||[]);
-  const doneWeekly    = weeklyDoneSet.size;
+  const doneDaily  = doneToday.filter(id=>dailyActions.some(a=>a.id===id)).length;
+  const doneWeekly = doneToday.filter(id=>weeklyActions.some(a=>a.id===id)).length;
 
   const catXp = {};
   CATEGORIES.forEach(c=>catXp[c]=0);
@@ -558,22 +505,20 @@ function TabDashboard({ game, level, cls }) {
               <span style={{fontFamily:"Cinzel,serif",color:CAT_COLORS[cat],fontSize:12,fontWeight:700}}>{cat}</span>
               <span style={{fontSize:11,color:"#666"}}>⭐ {(catXp[cat]||0).toLocaleString()} XP</span>
             </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {catActions.map(a => {
-                    const doneThisDay  = doneToday.includes(a.id);
-                    const doneThisWeek = a.frequency === "weekly" ? weeklyDoneSet.has(a.id) : false;
-                    const isDone = a.frequency === "weekly" ? doneThisWeek : doneThisDay;
-                    return (
-                      <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 5, borderRadius: 99, padding: "4px 10px",
-                        background: isDone ? CAT_COLORS[cat] + "33" : "#1e1608", border: `1px solid ${isDone ? CAT_COLORS[cat] : "#2a1e06"}` }}>
-                        <span style={{ fontSize: 11 }}>{isDone ? "✅" : "⬜"}</span>
-                        <span style={{ fontSize: 12, color: "#ddd" }}>{a.title}</span>
-                        {a.frequency === "weekly" && <span style={{ fontSize: 9, color: "#888", background: "#2a1e06", borderRadius: 99, padding: "1px 5px" }}>semaine</span>}
-                        <span style={{ fontSize: 10, color: "#c9a84c" }}>+{a.xp}</span>
-                      </div>
-                    );
-                  })}
-                </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {catActions.map(a=>{
+                const done=doneToday.includes(a.id);
+                return (
+                  <div key={a.id} style={{display:"flex",alignItems:"center",gap:5,borderRadius:99,padding:"4px 10px",
+                    background:done?CAT_COLORS[cat]+"33":"#1e1608",border:`1px solid ${done?CAT_COLORS[cat]:"#2a1e06"}`}}>
+                    <span style={{fontSize:11}}>{done?"✅":"⬜"}</span>
+                    <span style={{fontSize:12,color:"#ddd"}}>{a.title}</span>
+                    <span style={{fontSize:10,color:"#888"}}>{a.frequency==="weekly"?"hebdo":""}</span>
+                    <span style={{fontSize:10,color:"#c9a84c"}}>+{a.xp}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       })}
@@ -628,9 +573,8 @@ function TabDaily({ game, updateGame, showToast }) {
 
   const dailyActions  = (game.actions||[]).filter(a=>a.frequency==="daily");
   const weeklyActions = (game.actions||[]).filter(a=>a.frequency==="weekly");
-  const weeklyDoneSet = getWeeklyDoneThisWeek(game.log||[], today, game.actions||[]);
 
-  const renderSection = (actions) => {
+  const renderSection = (actions, label) => {
     if(!actions.length) return null;
     return (
       <>
@@ -641,13 +585,10 @@ function TabDaily({ game, updateGame, showToast }) {
             <div key={cat} style={{...S.catBlock,borderLeft:`3px solid ${CAT_COLORS[cat]}`,marginBottom:8}}>
               <div style={{color:CAT_COLORS[cat],fontFamily:"Cinzel,serif",fontSize:12,fontWeight:700,marginBottom:8}}>{cat}</div>
               {catA.map(a=>{
-                const isDone       = done.includes(a.id);
-                const doneThisWeek = a.frequency==="weekly" && weeklyDoneSet.has(a.id) && !isDone;
+                const isDone=done.includes(a.id);
                 return (
                   <div key={a.id} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 6px",borderRadius:6,
-                    cursor:"pointer",marginBottom:3,
-                    background: isDone ? "#1e3320" : doneThisWeek ? "#1a1e10" : "transparent",
-                    transition:"background .15s"}}
+                    cursor:"pointer",marginBottom:3,background:isDone?"#1e3320":"transparent",transition:"background .15s"}}
                     onClick={()=>toggle(a.id)}>
                     <div style={{width:22,height:22,borderRadius:4,border:`2px solid ${CAT_COLORS[cat]}`,flexShrink:0,
                       display:"flex",alignItems:"center",justifyContent:"center",
@@ -656,9 +597,6 @@ function TabDaily({ game, updateGame, showToast }) {
                     </div>
                     <div style={{flex:1}}>
                       <div style={{fontSize:14,color:isDone?"#c9a84c":"#ddd"}}>{a.title}</div>
-                      {doneThisWeek && (
-                        <div style={{fontSize:10,color:"#52e08a",marginTop:1}}>✅ Déjà fait cette semaine</div>
-                      )}
                     </div>
                     <div style={{color:"#c9a84c",fontSize:12}}>+{a.xp} XP</div>
                   </div>
@@ -850,98 +788,18 @@ function TabQuests({ game, updateGame, showToast }) {
 //  TAB — HISTORIQUE
 // ════════════════════════════════════════════════════════════════
 function TabLog({ game }) {
-  const logs = [...(game.log||[])].sort((a,b) => b.date.localeCompare(a.date));
-  if (!logs.length) return <p style={S.empty}>Aucune entrée. Remplis ton journal quotidien !</p>;
-
-  // Construire la liste des lundis passés (semaines complètes uniquement)
-  const today     = TODAY();
-  const thisWeekStart = getWeekStart(today);
-
-  // Collecter tous les lundis présents dans les logs (hors semaine en cours)
-  const pastWeekStarts = new Set();
-  logs.forEach(l => {
-    const ws = getWeekStart(l.date);
-    if (ws < thisWeekStart) pastWeekStarts.add(ws);
-  });
-
-  // Pour chaque log, vérifier si c'est le premier jour affiché d'une nouvelle semaine
-  // (i.e. juste avant ce log on change de semaine) → on insère le bilan de la semaine précédente
-  const items = []; // {type:"log"|"summary", data}
-  let lastWeekStart = null;
-
-  logs.forEach(l => {
-    const ws = getWeekStart(l.date);
-    // Si on change de semaine et que la semaine précédente est terminée
-    if (lastWeekStart && ws !== lastWeekStart && lastWeekStart < thisWeekStart) {
-      const summary = getWeekSummary(game.log||[], lastWeekStart, game.actions||[]);
-      if (summary) items.push({type:"summary", data: summary});
-    }
-    items.push({type:"log", data: l});
-    lastWeekStart = ws;
-  });
-  // Bilan pour la dernière semaine affichée si elle est passée
-  if (lastWeekStart && lastWeekStart < thisWeekStart) {
-    const summary = getWeekSummary(game.log||[], lastWeekStart, game.actions||[]);
-    if (summary) items.push({type:"summary", data: summary});
-  }
-
+  const logs=[...(game.log||[])].sort((a,b)=>b.date.localeCompare(a.date));
+  if(!logs.length) return <p style={S.empty}>Aucune entrée. Remplis ton journal quotidien !</p>;
   return (
     <div>
       <div style={S.sectionTitle}>📜 Chroniques</div>
-      {items.map((item, idx) => {
-        if (item.type === "summary") {
-          const s = item.data;
-          const ws = s.weekStart, we = s.we;
-          const weekLabel = `Semaine du ${fmtShort(ws)} au ${fmtShort(we)}`;
-          return (
-            <div key={"sum-"+ws} style={{
-              background:"#0f1a14",border:"1px solid #1e3d28",borderRadius:10,
-              padding:"14px 16px",marginBottom:12,marginTop:4,
-            }}>
-              <div style={{fontFamily:"Cinzel,serif",color:"#52e08a",fontSize:12,fontWeight:700,marginBottom:10}}>
-                📊 Bilan — {weekLabel}
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div style={S.bilanTile}>
-                  <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{s.totalXp.toLocaleString()}</div>
-                  <div style={{fontSize:10,color:"#666",marginTop:1}}>XP gagnés</div>
-                </div>
-                <div style={S.bilanTile}>
-                  <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{s.avgXp}</div>
-                  <div style={{fontSize:10,color:"#666",marginTop:1}}>XP / jour en moyenne</div>
-                </div>
-                <div style={S.bilanTile}>
-                  <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{s.avgDaily}<span style={{fontSize:12,color:"#888"}}>/{s.dailyTotal}</span></div>
-                  <div style={{fontSize:10,color:"#666",marginTop:1}}>tâches quotidiennes / jour</div>
-                </div>
-                {s.weeklyTotal > 0 && (
-                  <div style={{...S.bilanTile, background: s.weeklyDone===s.weeklyTotal?"#1a2e1a":"#1a1208"}}>
-                    <div style={{fontSize:18,fontWeight:700,color: s.weeklyDone===s.weeklyTotal?"#52e08a":"#e07852"}}>
-                      {s.weeklyDone}<span style={{fontSize:12,color:"#888"}}>/{s.weeklyTotal}</span>
-                    </div>
-                    <div style={{fontSize:10,color:"#666",marginTop:1}}>tâches hebdo faites</div>
-                  </div>
-                )}
-              </div>
-              <div style={{fontSize:11,color:"#555",marginTop:8,textAlign:"right"}}>
-                {s.daysLogged} jour{s.daysLogged>1?"s":""} enregistré{s.daysLogged>1?"s":""}
-              </div>
-            </div>
-          );
-        }
-
-        const l   = item.data;
-        const dayXp = (l.xpBreakdown||[]).reduce((s,x)=>s+x.xp,0);
-        const acts  = (l.done||[]).map(id=>(game.actions||[]).find(a=>a.id===id)).filter(Boolean);
-        const isMonday = new Date(l.date+"T12:00:00").getDay() === 1;
-
+      {logs.map(l=>{
+        const dayXp=(l.xpBreakdown||[]).reduce((s,x)=>s+x.xp,0);
+        const acts=(l.done||[]).map(id=>(game.actions||[]).find(a=>a.id===id)).filter(Boolean);
         return (
-          <div key={l.date} style={{...S.catBlock, marginBottom:8, ...(isMonday?{borderTop:"1px solid #2a1e06"}:{})}}>
+          <div key={l.date} style={{...S.catBlock,marginBottom:10}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontFamily:"Cinzel,serif",color:"#c9a84c",fontWeight:700,fontSize:13}}>
-                {isMonday && <span style={{fontSize:9,color:"#888",marginRight:6,verticalAlign:"middle",background:"#2a1e06",padding:"1px 5px",borderRadius:99}}>LUN</span>}
-                {fmtShort(l.date)}
-              </span>
+              <span style={{fontFamily:"Cinzel,serif",color:"#c9a84c",fontWeight:700,fontSize:13}}>{fmtShort(l.date)}</span>
               <span style={{color:"#52b0e0",fontWeight:700}}>+{dayXp} XP</span>
             </div>
             {acts.length>0&&(
@@ -1219,7 +1077,6 @@ const S = {
   sectionTitle:{ fontFamily:"Cinzel,serif",color:"#c9a84c",fontSize:13,fontWeight:700,marginBottom:10,letterSpacing:.5 },
   catBlock: { background:"#17120a",border:"1px solid #1e1608",borderRadius:8,padding:12 },
   empty:    { color:"#555",textAlign:"center",padding:"40px 20px",fontStyle:"italic",lineHeight:1.8,fontSize:14 },
-  bilanTile:{ background:"#17120a",border:"1px solid #2a1e06",borderRadius:8,padding:"10px 12px",textAlign:"center" },
 };
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
