@@ -853,95 +853,108 @@ function TabLog({ game }) {
   const logs = [...(game.log||[])].sort((a,b) => b.date.localeCompare(a.date));
   if (!logs.length) return <p style={S.empty}>Aucune entrée. Remplis ton journal quotidien !</p>;
 
-  const today         = TODAY();
+  // Construire la liste des lundis passés (semaines complètes uniquement)
+  const today     = TODAY();
   const thisWeekStart = getWeekStart(today);
 
-  // ── Grouper les logs par semaine ────────────────────────────
-  const weekMap = {};
+  // Collecter tous les lundis présents dans les logs (hors semaine en cours)
+  const pastWeekStarts = new Set();
   logs.forEach(l => {
     const ws = getWeekStart(l.date);
-    if (!weekMap[ws]) weekMap[ws] = [];
-    weekMap[ws].push(l);
+    if (ws < thisWeekStart) pastWeekStarts.add(ws);
   });
 
-  // Semaines triées du plus récent au plus ancien
-  const weeks = Object.keys(weekMap).sort((a,b) => b.localeCompare(a));
+  // Pour chaque log, vérifier si c'est le premier jour affiché d'une nouvelle semaine
+  // (i.e. juste avant ce log on change de semaine) → on insère le bilan de la semaine précédente
+  const items = []; // {type:"log"|"summary", data}
+  let lastWeekStart = null;
+
+  logs.forEach(l => {
+    const ws = getWeekStart(l.date);
+    // Si on change de semaine et que la semaine précédente est terminée
+    if (lastWeekStart && ws !== lastWeekStart && lastWeekStart < thisWeekStart) {
+      const summary = getWeekSummary(game.log||[], lastWeekStart, game.actions||[]);
+      if (summary) items.push({type:"summary", data: summary});
+    }
+    items.push({type:"log", data: l});
+    lastWeekStart = ws;
+  });
+  // Bilan pour la dernière semaine affichée si elle est passée
+  if (lastWeekStart && lastWeekStart < thisWeekStart) {
+    const summary = getWeekSummary(game.log||[], lastWeekStart, game.actions||[]);
+    if (summary) items.push({type:"summary", data: summary});
+  }
 
   return (
     <div>
       <div style={S.sectionTitle}>📜 Chroniques</div>
-      {weeks.map(ws => {
-        const weekLogs = weekMap[ws].sort((a,b) => b.date.localeCompare(a.date));
-        const isPast   = ws < thisWeekStart;
-        const summary  = isPast ? getWeekSummary(game.log||[], ws, game.actions||[]) : null;
-        const we       = getWeekEnd(ws);
+      {items.map((item, idx) => {
+        if (item.type === "summary") {
+          const s = item.data;
+          const ws = s.weekStart, we = s.we;
+          const weekLabel = `Semaine du ${fmtShort(ws)} au ${fmtShort(we)}`;
+          return (
+            <div key={"sum-"+ws} style={{
+              background:"#0f1a14",border:"1px solid #1e3d28",borderRadius:10,
+              padding:"14px 16px",marginBottom:12,marginTop:4,
+            }}>
+              <div style={{fontFamily:"Cinzel,serif",color:"#52e08a",fontSize:12,fontWeight:700,marginBottom:10}}>
+                📊 Bilan — {weekLabel}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div style={S.bilanTile}>
+                  <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{s.totalXp.toLocaleString()}</div>
+                  <div style={{fontSize:10,color:"#666",marginTop:1}}>XP gagnés</div>
+                </div>
+                <div style={S.bilanTile}>
+                  <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{s.avgXp}</div>
+                  <div style={{fontSize:10,color:"#666",marginTop:1}}>XP / jour en moyenne</div>
+                </div>
+                <div style={S.bilanTile}>
+                  <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{s.avgDaily}<span style={{fontSize:12,color:"#888"}}>/{s.dailyTotal}</span></div>
+                  <div style={{fontSize:10,color:"#666",marginTop:1}}>tâches quotidiennes / jour</div>
+                </div>
+                {s.weeklyTotal > 0 && (
+                  <div style={{...S.bilanTile, background: s.weeklyDone===s.weeklyTotal?"#1a2e1a":"#1a1208"}}>
+                    <div style={{fontSize:18,fontWeight:700,color: s.weeklyDone===s.weeklyTotal?"#52e08a":"#e07852"}}>
+                      {s.weeklyDone}<span style={{fontSize:12,color:"#888"}}>/{s.weeklyTotal}</span>
+                    </div>
+                    <div style={{fontSize:10,color:"#666",marginTop:1}}>tâches hebdo faites</div>
+                  </div>
+                )}
+              </div>
+              <div style={{fontSize:11,color:"#555",marginTop:8,textAlign:"right"}}>
+                {s.daysLogged} jour{s.daysLogged>1?"s":""} enregistré{s.daysLogged>1?"s":""}
+              </div>
+            </div>
+          );
+        }
+
+        const l   = item.data;
+        const dayXp = (l.xpBreakdown||[]).reduce((s,x)=>s+x.xp,0);
+        const acts  = (l.done||[]).map(id=>(game.actions||[]).find(a=>a.id===id)).filter(Boolean);
+        const isMonday = new Date(l.date+"T12:00:00").getDay() === 1;
 
         return (
-          <div key={ws}>
-            {/* Logs de la semaine */}
-            {weekLogs.map(l => {
-              const dayXp = (l.xpBreakdown||[]).reduce((s,x)=>s+x.xp,0);
-              const acts  = (l.done||[]).map(id=>(game.actions||[]).find(a=>a.id===id)).filter(Boolean);
-              const isMonday = new Date(l.date+"T12:00:00").getDay() === 1;
-              return (
-                <div key={l.date} style={{...S.catBlock, marginBottom:6}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{fontFamily:"Cinzel,serif",color:"#c9a84c",fontWeight:700,fontSize:13}}>
-                      {isMonday && <span style={{fontSize:9,color:"#888",marginRight:6,verticalAlign:"middle",
-                        background:"#2a1e06",padding:"1px 5px",borderRadius:99}}>LUN</span>}
-                      {fmtShort(l.date)}
-                    </span>
-                    <span style={{color:"#52b0e0",fontWeight:700}}>+{dayXp} XP</span>
-                  </div>
-                  {acts.length>0&&(
-                    <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:8}}>
-                      {acts.map(a=>(
-                        <span key={a.id} style={{borderRadius:99,padding:"3px 10px",fontSize:11,
-                          background:CAT_COLORS[a.category]+"22",border:`1px solid ${CAT_COLORS[a.category]}55`,
-                          color:CAT_COLORS[a.category]}}>{a.title}</span>
-                      ))}
-                    </div>
-                  )}
-                  {l.note&&<div style={{fontSize:12,color:"#888",marginTop:8,fontStyle:"italic",lineHeight:1.6}}>"{l.note}"</div>}
-                  {!acts.length&&!l.note&&<div style={{fontSize:12,color:"#555",marginTop:6}}>Aucune action complétée.</div>}
-                </div>
-              );
-            })}
-
-            {/* Bilan juste après les logs de la semaine passée */}
-            {summary && (
-              <div style={{background:"#0f1a14",border:"1px solid #1e3d28",borderRadius:10,
-                padding:"14px 16px",marginBottom:16,marginTop:4}}>
-                <div style={{fontFamily:"Cinzel,serif",color:"#52e08a",fontSize:12,fontWeight:700,marginBottom:10}}>
-                  📊 Bilan — du {fmtShort(ws)} au {fmtShort(we)}
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div style={S.bilanTile}>
-                    <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{summary.totalXp.toLocaleString()}</div>
-                    <div style={{fontSize:10,color:"#666",marginTop:1}}>XP gagnés</div>
-                  </div>
-                  <div style={S.bilanTile}>
-                    <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{summary.avgXp}</div>
-                    <div style={{fontSize:10,color:"#666",marginTop:1}}>XP / jour en moyenne</div>
-                  </div>
-                  <div style={S.bilanTile}>
-                    <div style={{fontSize:18,fontWeight:700,color:"#f0dfa0"}}>{summary.avgDaily}<span style={{fontSize:12,color:"#888"}}>/{summary.dailyTotal}</span></div>
-                    <div style={{fontSize:10,color:"#666",marginTop:1}}>tâches quotidiennes / jour</div>
-                  </div>
-                  {summary.weeklyTotal > 0 && (
-                    <div style={{...S.bilanTile, background:summary.weeklyDone===summary.weeklyTotal?"#1a2e1a":"#1a1208"}}>
-                      <div style={{fontSize:18,fontWeight:700,color:summary.weeklyDone===summary.weeklyTotal?"#52e08a":"#e07852"}}>
-                        {summary.weeklyDone}<span style={{fontSize:12,color:"#888"}}>/{summary.weeklyTotal}</span>
-                      </div>
-                      <div style={{fontSize:10,color:"#666",marginTop:1}}>tâches hebdo faites</div>
-                    </div>
-                  )}
-                </div>
-                <div style={{fontSize:11,color:"#555",marginTop:8,textAlign:"right"}}>
-                  {summary.daysLogged} jour{summary.daysLogged>1?"s":""} enregistré{summary.daysLogged>1?"s":""}
-                </div>
+          <div key={l.date} style={{...S.catBlock, marginBottom:8, ...(isMonday?{borderTop:"1px solid #2a1e06"}:{})}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontFamily:"Cinzel,serif",color:"#c9a84c",fontWeight:700,fontSize:13}}>
+                {isMonday && <span style={{fontSize:9,color:"#888",marginRight:6,verticalAlign:"middle",background:"#2a1e06",padding:"1px 5px",borderRadius:99}}>LUN</span>}
+                {fmtShort(l.date)}
+              </span>
+              <span style={{color:"#52b0e0",fontWeight:700}}>+{dayXp} XP</span>
+            </div>
+            {acts.length>0&&(
+              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:8}}>
+                {acts.map(a=>(
+                  <span key={a.id} style={{borderRadius:99,padding:"3px 10px",fontSize:11,
+                    background:CAT_COLORS[a.category]+"22",border:`1px solid ${CAT_COLORS[a.category]}55`,
+                    color:CAT_COLORS[a.category]}}>{a.title}</span>
+                ))}
               </div>
             )}
+            {l.note&&<div style={{fontSize:12,color:"#888",marginTop:8,fontStyle:"italic",lineHeight:1.6}}>"{l.note}"</div>}
+            {!acts.length&&!l.note&&<div style={{fontSize:12,color:"#555",marginTop:6}}>Aucune action complétée.</div>}
           </div>
         );
       })}
