@@ -676,8 +676,23 @@
           totalXp += earned;
         });
         const prevXp = (existing.xpBreakdown || []).reduce((s, x) => s + x.xp, 0);
+        // Hydrate les anciens logs sans title
+        const hydratedLog = (g.log || []).map(entry => ({
+          ...entry,
+          xpBreakdown: (entry.xpBreakdown || []).map(x => ({
+            ...x,
+            title: x.title || (game.actions || []).find(a => a.id === x.id)?.title || x.title,
+          }))
+        }));
         updateGame(g => {
-          const logs = (g.log || []).filter(l => l.date !== today);
+          const hydratedLog = (g.log || []).map(entry => ({
+            ...entry,
+            xpBreakdown: (entry.xpBreakdown || []).map(x => ({
+              ...x,
+              title: x.title || (game.actions || []).find(a => a.id === x.id)?.title,
+            }))
+          }));
+          const logs = hydratedLog.filter(l => l.date !== today);
           return { ...g, xp: (g.xp || 0) + totalXp - prevXp, log: [...logs, { date: today, done, xpBreakdown, note }] };
         });
         setSaved(true);
