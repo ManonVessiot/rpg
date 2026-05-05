@@ -663,6 +663,7 @@
         const bonusCat = (CLASSES.find(c => c.id === game.class) || CLASSES[0]).bonus;
         const xpBreakdown = [];
         let totalXp = 0;
+
         done.forEach(id => {
           const a = (game.actions || []).find(x => x.id === id);
           if (!a) return;
@@ -671,30 +672,31 @@
             id,
             cat: a.category,
             xp: earned,
-            title: a.title,
+            title: a.title,   // snapshot du titre au moment de la sauvegarde
           });
           totalXp += earned;
         });
+
         const prevXp = (existing.xpBreakdown || []).reduce((s, x) => s + x.xp, 0);
-        // Hydrate les anciens logs sans title
-        const hydratedLog = (g.log || []).map(entry => ({
-          ...entry,
-          xpBreakdown: (entry.xpBreakdown || []).map(x => ({
-            ...x,
-            title: x.title || (game.actions || []).find(a => a.id === x.id)?.title || x.title,
-          }))
-        }));
+
         updateGame(g => {
+          // Hydrate tous les anciens logs : ajoute/met à jour le title si l'action existe encore
           const hydratedLog = (g.log || []).map(entry => ({
             ...entry,
             xpBreakdown: (entry.xpBreakdown || []).map(x => ({
               ...x,
-              title: x.title || (game.actions || []).find(a => a.id === x.id)?.title,
+              title: (g.actions || []).find(a => a.id === x.id)?.title || x.title,
             }))
           }));
+
           const logs = hydratedLog.filter(l => l.date !== today);
-          return { ...g, xp: (g.xp || 0) + totalXp - prevXp, log: [...logs, { date: today, done, xpBreakdown, note }] };
+          return {
+            ...g,
+            xp: (g.xp || 0) + totalXp - prevXp,
+            log: [...logs, { date: today, done, xpBreakdown, note }]
+          };
         });
+
         setSaved(true);
         showToast(`+${totalXp} XP gagnés aujourd'hui ! 🎉`);
       };
