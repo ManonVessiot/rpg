@@ -648,34 +648,14 @@
     }
 
     // ════════════════════════════════════════════════════════════════
-    //  TAB — JOURNAL QUOTIDIEN (avec navigation dans le temps)
+    //  TAB — JOURNAL QUOTIDIEN
     // ════════════════════════════════════════════════════════════════
     function TabDaily({ game, updateGame, showToast }) {
       const today = TODAY();
-      const [selectedDate, setSelectedDate] = useState(today);
-
-      const existing = (game.log || []).find(l => l.date === selectedDate) || { date: selectedDate, done: [], xpBreakdown: [], note: "" };
+      const existing = (game.log || []).find(l => l.date === today) || { date: today, done: [], xpBreakdown: [], note: "" };
       const [done, setDone] = useState(existing.done || []);
       const [note, setNote] = useState(existing.note || "");
       const [saved, setSaved] = useState(false);
-
-      // Recharge done/note quand on change de date
-      useEffect(() => {
-        const entry = (game.log || []).find(l => l.date === selectedDate) || { done: [], note: "" };
-        setDone(entry.done || []);
-        setNote(entry.note || "");
-        setSaved(false);
-      }, [selectedDate]);
-
-      const isToday   = selectedDate === today;
-      const isPast    = selectedDate < today;
-
-      const goDay = (offset) => {
-        const d = new Date(selectedDate + "T12:00:00");
-        d.setDate(d.getDate() + offset);
-        const next = d.toISOString().slice(0, 10);
-        if (next <= today) setSelectedDate(next);
-      };
 
       const toggle = id => { setSaved(false); setDone(d => d.includes(id) ? d.filter(x => x !== id) : [...d, id]); };
 
@@ -688,13 +668,19 @@
           const a = (game.actions || []).find(x => x.id === id);
           if (!a) return;
           const earned = Math.floor(a.xp * (a.category === bonusCat ? 1.5 : 1));
-          xpBreakdown.push({ id, cat: a.category, xp: earned, title: a.title });
+          xpBreakdown.push({
+            id,
+            cat: a.category,
+            xp: earned,
+            title: a.title,   // snapshot du titre au moment de la sauvegarde
+          });
           totalXp += earned;
         });
 
         const prevXp = (existing.xpBreakdown || []).reduce((s, x) => s + x.xp, 0);
 
         updateGame(g => {
+          // Hydrate tous les anciens logs : ajoute/met à jour le title si l'action existe encore
           const hydratedLog = (g.log || []).map(entry => ({
             ...entry,
             xpBreakdown: (entry.xpBreakdown || []).map(x => ({
@@ -702,24 +688,22 @@
               title: (g.actions || []).find(a => a.id === x.id)?.title || x.title,
             }))
           }));
-          const logs = hydratedLog.filter(l => l.date !== selectedDate);
+
+          const logs = hydratedLog.filter(l => l.date !== today);
           return {
             ...g,
             xp: (g.xp || 0) + totalXp - prevXp,
-            log: [...logs, { date: selectedDate, done, xpBreakdown, note }]
+            log: [...logs, { date: today, done, xpBreakdown, note }]
           };
         });
 
         setSaved(true);
-        showToast(isPast
-          ? `📅 Journée du ${fmtShort(selectedDate)} mise à jour !`
-          : `+${totalXp} XP gagnés aujourd'hui ! 🎉`
-        );
+        showToast(`+${totalXp} XP gagnés aujourd'hui ! 🎉`);
       };
 
-      const dailyActions  = (game.actions || []).filter(a => a.frequency === "daily");
+      const dailyActions = (game.actions || []).filter(a => a.frequency === "daily");
       const weeklyActions = (game.actions || []).filter(a => a.frequency === "weekly");
-      const weeklyDoneSet = getWeeklyDoneThisWeek(game.log || [], selectedDate, game.actions || []);
+      const weeklyDoneSet = getWeeklyDoneThisWeek(game.log || [], today, game.actions || []);
 
       const renderSection = (actions) => {
         if (!actions.length) return null;
@@ -740,7 +724,8 @@
                         cursor: "pointer", marginBottom: 3,
                         background: isDone ? "#1e3320" : doneThisWeek ? "#1a1e10" : "transparent",
                         transition: "background .15s"
-                      }} onClick={() => toggle(a.id)}>
+                      }}
+                        onClick={() => toggle(a.id)}>
                         <div style={{
                           width: 22, height: 22, borderRadius: 4, border: `2px solid ${CAT_COLORS[cat]}`, flexShrink: 0,
                           display: "flex", alignItems: "center", justifyContent: "center",
@@ -750,7 +735,9 @@
                         </div>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 14, color: isDone ? "#c9a84c" : "#ddd" }}>{a.title}</div>
-                          {doneThisWeek && <div style={{ fontSize: 10, color: "#52e08a", marginTop: 1 }}>✅ Déjà fait cette semaine</div>}
+                          {doneThisWeek && (
+                            <div style={{ fontSize: 10, color: "#52e08a", marginTop: 1 }}>✅ Déjà fait cette semaine</div>
+                          )}
                         </div>
                         <div style={{ color: "#c9a84c", fontSize: 12 }}>+{a.xp} XP</div>
                       </div>
@@ -765,38 +752,19 @@
 
       return (
         <div>
-          {/* SÉLECTEUR DE DATE */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-            <button style={{ ...S.btnSec, padding: "6px 12px", fontSize: 16 }} onClick={() => goDay(-1)}>←</button>
-            <div style={{ flex: 1, textAlign: "center" }}>
-              <input
-                type="date" max={today} value={selectedDate}
-                onChange={e => e.target.value && e.target.value <= today && setSelectedDate(e.target.value)}
-                style={{ ...S.input, textAlign: "center", fontFamily: "Cinzel,serif", color: "#c9a84c", fontWeight: 700, cursor: "pointer" }}
-              />
-              {isPast && <div style={{ fontSize: 11, color: "#e07852", marginTop: 4, fontFamily: "Cinzel,serif" }}>⏪ Modification d'un jour passé</div>}
-            </div>
-            <button
-              style={{ ...S.btnSec, padding: "6px 12px", fontSize: 16, opacity: isToday ? 0.3 : 1 }}
-              onClick={() => goDay(1)} disabled={isToday}>→</button>
-          </div>
-
+          <div style={S.sectionTitle}>📋 Journal du {fmtShort(today)}</div>
           {!(game.actions || []).length && <p style={S.empty}>Aucune action définie.</p>}
 
           {dailyActions.length > 0 && (
             <>
-              <div style={{ fontSize: 12, color: "#888", marginBottom: 8, fontFamily: "Cinzel,serif" }}>
-                — Quotidien ({done.filter(id => dailyActions.some(a => a.id === id)).length}/{dailyActions.length})
-              </div>
+              <div style={{ fontSize: 12, color: "#888", marginBottom: 8, fontFamily: "Cinzel,serif" }}>— Quotidien ({done.filter(id => dailyActions.some(a => a.id === id)).length}/{dailyActions.length})</div>
               {renderSection(dailyActions)}
             </>
           )}
 
           {weeklyActions.length > 0 && (
             <>
-              <div style={{ fontSize: 12, color: "#888", margin: "12px 0 8px", fontFamily: "Cinzel,serif" }}>
-                — Hebdomadaire ({done.filter(id => weeklyActions.some(a => a.id === id)).length}/{weeklyActions.length})
-              </div>
+              <div style={{ fontSize: 12, color: "#888", margin: "12px 0 8px", fontFamily: "Cinzel,serif" }}>— Hebdomadaire ({done.filter(id => weeklyActions.some(a => a.id === id)).length}/{weeklyActions.length})</div>
               {renderSection(weeklyActions)}
             </>
           )}
@@ -808,7 +776,7 @@
               value={note} onChange={e => { setNote(e.target.value); setSaved(false); }} />
           </div>
           <button style={{ ...S.btnPrim, marginTop: 12, width: "100%" }} onClick={handleSave}>
-            {saved ? "✅ Sauvegardé !" : isPast ? `💾 Sauvegarder le ${fmtShort(selectedDate)}` : "💾 Enregistrer ma journée"}
+            {saved ? "✅ Sauvegardé !" : "💾 Enregistrer ma journée"}
           </button>
         </div>
       );
